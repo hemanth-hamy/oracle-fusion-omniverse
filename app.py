@@ -1,10 +1,13 @@
-import os
+import os, html
 from datetime import datetime
 from typing import List, Tuple, Optional
 
 import streamlit as st
 import pandas as pd
 import numpy as np
+
+from pathlib import Path
+import streamlit.components.v1 as components
 
 # Orchestrator (lite, safe for Streamlit)
 from agent_orchestrator import bind_youtube_functions, route, execute
@@ -47,12 +50,12 @@ with st.sidebar:
             """
             <div style="border:1px solid #e3b341;padding:10px;border-radius:8px;background:#fff8e1">
             <b>Heads up:</b> You entered a key here. For permanent use, move it to
-            <i>Settings → Secrets</i> so it never appears in the UI.
+            <i>Settings → Secrets</i>.
             </div>
             """,
             unsafe_allow_html=True,
         )
-    st.caption("Secrets format:\nOPENAI_API_KEY='sk-...'\nGEMINI_API_KEY='...'")
+    st.caption("Secrets:\nOPENAI_API_KEY='sk-...'\nGEMINI_API_KEY='...'")
     st.write(f"OpenAI: {'✅' if OPENAI_API_KEY else '—'}  |  Gemini: {'✅' if GEMINI_API_KEY else '—'}")
 
     st.markdown("---")
@@ -66,26 +69,17 @@ with st.sidebar:
 
     st.markdown("---")
     st.subheader("⚡ Quick Actions (runs here)")
-
-    agent_q = st.text_input(
-        "Agent Console input",
-        placeholder="Paste YouTube URL(s) or an ORA- error…",
-        key="sb_agent_q",
-    )
+    agent_q = st.text_input("Agent Console input", placeholder="Paste YouTube URL(s) or an ORA- error…", key="sb_agent_q")
     if st.button("Run Agent (sidebar)"):
-        st.session_state._run_agent_sidebar = True  # will execute after functions are bound
+        st.session_state._run_agent_sidebar = True
 
     if st.session_state.sidebar_agent_out:
         st.caption("Agent output")
         st.code(st.session_state.sidebar_agent_out)
 
-    yt_quick = st.text_input(
-        "YouTube URL (quick summarize)",
-        placeholder="https://www.youtube.com/watch?v=VIDEO_ID",
-        key="sb_yt_url",
-    )
+    yt_quick = st.text_input("YouTube URL (quick summarize)", placeholder="https://www.youtube.com/watch?v=VIDEO_ID", key="sb_yt_url")
     if st.button("Summarize YT (sidebar)"):
-        st.session_state._run_yt_sidebar = True  # will execute in YT tab once helpers exist
+        st.session_state._run_yt_sidebar = True
 
     if st.session_state.sidebar_yt_out:
         st.caption("YouTube summary (snippet)")
@@ -158,14 +152,10 @@ def llm_fix_with_openai(prompt: str) -> Optional[str]:
     try:
         from openai import OpenAI
         client = OpenAI(api_key=OPENAI_API_KEY)
-        sys = (
-            "You are an Oracle Fusion + OIC + SQL/PLSQL senior support analyst. "
-            "Return actionable, numbered steps. Keep it concise and accurate."
-        )
+        sys = "You are an Oracle Fusion + OIC + SQL/PLSQL senior support analyst. Return actionable, numbered steps."
         resp = client.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[{"role": "system", "content": sys},
-                      {"role": "user", "content": prompt}],
+            messages=[{"role": "system", "content": sys},{"role": "user", "content": prompt}],
             temperature=0.2,
         )
         return resp.choices[0].message.content
@@ -179,35 +169,23 @@ def llm_fix_with_gemini(prompt: str) -> Optional[str]:
         import google.generativeai as genai
         genai.configure(api_key=GEMINI_API_KEY)
         model = genai.GenerativeModel("gemini-1.5-flash")
-        r = model.generate_content(
-            "Act as Oracle Fusion/OIC support SME. Return precise steps.\n\n" + prompt
-        )
-        return r.text
+        return model.generate_content("Act as Oracle Fusion/OIC support SME.\n\n" + prompt).text
     except Exception as e:
         return f"(Gemini error: {e})"
 
 # ========= UI Tabs =========
-tabs = st.tabs([
-    "Overview", "Diagnose", "Analytics", "Security", "Optimize", "Integrations", "Voice Mode", "YouTube AI"
-])
+tabs = st.tabs(["Overview", "Diagnose", "Analytics", "Security", "Optimize", "Integrations", "Voice Mode", "YouTube AI"])
 
 # --- Overview ---
 with tabs[0]:
     st.title("🛠️ Oracle Fusion Omniverse")
-    st.write(
-        "Personal support console for Oracle ERP, OIC, and SQL/PLSQL. "
-        "Paste errors, upload screenshots/logs, and get instant step-by-step fixes."
-    )
+    st.write("Personal support console for Oracle ERP, OIC, and SQL/PLSQL.")
     st.info("Works offline with a built-in playbook. Add API keys in the sidebar to enable AI reasoning.")
     st.markdown("**Build:** " + datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"))
 
-    # Agent Console (router demo)
     st.markdown("---")
     st.subheader("🧠 Agent Console (router demo)")
-    agent_q_main = st.text_input(
-        "Ask anything (paste 1+ YouTube URLs to trigger YouTube; ORA-xxxx to trigger CrewAI)",
-        placeholder="Summarize https://www.youtube.com/watch?v=iG9CE55wbtY (TED talk)"
-    )
+    agent_q_main = st.text_input("Ask anything (paste YouTube URLs or ORA-xxxx):", placeholder="https://www.youtube.com/watch?v=iG9CE55wbtY")
     if st.button("Run Agent"):
         s = route(agent_q_main)
         out = execute(s)
@@ -216,24 +194,13 @@ with tabs[0]:
 # --- Diagnose ---
 with tabs[1]:
     st.header("🔍 Diagnose & Fix")
-    err = st.text_area(
-        "Paste error message / log / description",
-        height=200,
-        placeholder="Example: ORA-00942: table or view does not exist"
-    )
-    uploads = st.file_uploader(
-        "Optional: attach screenshots/logs (txt/json/csv/png/jpg)",
-        type=["txt", "json", "csv", "log", "png", "jpg", "jpeg"],
-        accept_multiple_files=True
-    )
+    err = st.text_area("Paste error message / log / description", height=200, placeholder="Example: ORA-00942 ...")
+    uploads = st.file_uploader("Optional: attach screenshots/logs", type=["txt","json","csv","log","png","jpg","jpeg"], accept_multiple_files=True)
 
     colA, colB, colC = st.columns(3)
-    with colA:
-        use_rulebook = st.checkbox("Use built-in playbook", value=True)
-    with colB:
-        use_openai = st.checkbox("Use OpenAI (if key set)", value=bool(OPENAI_API_KEY))
-    with colC:
-        use_gemini = st.checkbox("Use Gemini (if key set)", value=False)
+    with colA: use_rulebook = st.checkbox("Use built-in playbook", value=True)
+    with colB: use_openai = st.checkbox("Use OpenAI (if key set)", value=bool(OPENAI_API_KEY))
+    with colC: use_gemini = st.checkbox("Use Gemini (if key set)", value=False)
 
     if st.button("Generate Fix Steps", type="primary"):
         if not err and not uploads:
@@ -242,10 +209,7 @@ with tabs[1]:
             blob = err or ""
             for f in uploads or []:
                 try:
-                    if f.type.startswith("image/"):
-                        blob += f"\n[image attached: {f.name}]"
-                    else:
-                        blob += "\n\n" + f.read().decode("utf-8", errors="ignore")
+                    blob += "\n\n" + (f.read().decode("utf-8", errors="ignore") if not f.type.startswith("image/") else f"[image:{f.name}]")
                 except Exception:
                     blob += f"\n[attached file: {f.name}]"
 
@@ -255,16 +219,12 @@ with tabs[1]:
                 sections.append("### 🧭 Playbook Suggestions\n" + "\n".join(f"- {s}" for s in steps))
             if use_openai and OPENAI_API_KEY:
                 ai = llm_fix_with_openai(blob)
-                if ai:
-                    sections.append("### 🤖 OpenAI\n" + ai)
+                if ai: sections.append("### 🤖 OpenAI\n" + ai)
             if use_gemini and GEMINI_API_KEY:
                 g = llm_fix_with_gemini(blob)
-                if g:
-                    sections.append("### 🌟 Gemini\n" + g)
+                if g: sections.append("### 🌟 Gemini\n" + g)
 
-            st.markdown("---")
-            st.subheader("Recommended Resolution")
-            st.markdown("\n\n".join(sections))
+            st.markdown("---"); st.subheader("Recommended Resolution"); st.markdown("\n\n".join(sections))
 
 # --- Analytics ---
 with tabs[2]:
@@ -284,21 +244,12 @@ with tabs[3]:
 # --- Optimize ---
 with tabs[4]:
     st.header("⚡ Optimize")
-    st.markdown("""
-- Add OIC fault handlers with retry + DLQ  
-- Pre-validate account combos before interface  
-- Use idempotent upserts and deduplication  
-- Cache reference data for faster triage  
-    """)
+    st.markdown("- Add OIC fault handlers with retry + DLQ\n- Pre-validate combos\n- Idempotent upserts\n- Cache ref data")
 
 # --- Integrations ---
 with tabs[5]:
     st.header("🔗 Integrations (notes)")
-    st.markdown("""
-**JIRA**: webhook or token to create ticket from fix summary  
-**Teams/Slack**: post steps via incoming webhook  
-**Email**: send steps with SMTP (keep light for free hosting)  
-    """)
+    st.markdown("**JIRA** webhook • **Slack/Teams** webhooks • **Email** via SMTP")
 
 # --- Voice Mode ---
 with tabs[6]:
@@ -312,123 +263,78 @@ with tabs[7]:
     st.header("📺 YouTube Summarizer + Deviations")
 
     url = st.text_input("YouTube URL", placeholder="https://www.youtube.com/watch?v=VIDEO_ID")
-    expected_topic = st.text_input(
-        "Expected topic / keywords (optional)",
-        placeholder="e.g., Oracle Grants budget consumption, funds check, ORA-00942"
-    )
+    expected_topic = st.text_input("Expected topic / keywords (optional)", placeholder="e.g., Oracle Grants budget consumption, ORA-00942")
     max_minutes = st.slider("Analyze first N minutes", 2, 60, 20)
 
     def _video_id(u: str) -> Optional[str]:
-        if not u:
-            return None
+        if not u: return None
         m = re.search(r"(?:v=|youtu\.be/|shorts/)([A-Za-z0-9_-]{6,})", u)
         return m.group(1) if m else None
 
     # ---- yt-dlp fallback when transcript API is disabled ----
     def _ytdlp_fallback_transcript(vid: str) -> Optional[List[dict]]:
-        """
-        Try grabbing auto-captions via yt-dlp + webvtt when YouTubeTranscriptApi fails.
-        Returns [{'start': seconds, 'text': '...'}] or None.
-        """
         try:
-            import yt_dlp, webvtt, tempfile, os
+            import yt_dlp, webvtt, tempfile
             url_full = f"https://www.youtube.com/watch?v={vid}"
             tmpdir = tempfile.mkdtemp()
             outtmpl = os.path.join(tmpdir, "%(id)s")
             ydl_opts = {
-                "skip_download": True,
-                "quiet": True,
-                "subtitleslangs": ["en", "en-US", "en-GB"],
-                "writeautomaticsub": True,
-                "writesubtitles": True,
+                "skip_download": True, "quiet": True,
+                "subtitleslangs": ["en","en-US","en-GB"],
+                "writeautomaticsub": True, "writesubtitles": True,
                 "outtmpl": outtmpl,
             }
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.extract_info(url_full, download=True)
-            # Find any .vtt in tmpdir
-            vtt_file = None
-            for fname in os.listdir(tmpdir):
-                if fname.endswith(".vtt"):
-                    vtt_file = os.path.join(tmpdir, fname)
-                    break
-            if not vtt_file:
-                return None
+            vtt_file = next((str(Path(tmpdir)/f) for f in os.listdir(tmpdir) if f.endswith(".vtt")), None)
+            if not vtt_file: return None
             items = []
             for cue in webvtt.read(vtt_file):
-                # "HH:MM:SS.mmm" → seconds (int)
-                def _to_sec(ts: str):
-                    h, m, s = ts.replace(",", ".").split(":")
-                    return int(float(h) * 3600 + float(m) * 60 + float(s))
-                items.append({"start": _to_sec(cue.start), "text": cue.text})
+                h, m, s = cue.start.replace(",", ".").split(":")
+                sec = int(float(h)*3600 + float(m)*60 + float(s))
+                items.append({"start": sec, "text": cue.text})
             return items or None
         except Exception:
             return None
 
     # ---- Backward-compatible transcript fetcher ----
     def get_best_transcript(vid: str) -> List[dict]:
-        """
-        Prefer manual/auto English; otherwise translate to English.
-        Works with new/old youtube-transcript-api; falls back to yt-dlp auto-captions.
-        """
         from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound, VideoUnavailable
-
-        # Newer versions: list_transcripts exists
         if hasattr(YouTubeTranscriptApi, "list_transcripts"):
             try:
                 listing = YouTubeTranscriptApi.list_transcripts(vid)
-            except VideoUnavailable:
-                raise RuntimeError("Video unavailable or private.")
-            except TranscriptsDisabled:
-                raise RuntimeError("Transcripts are disabled for this video.")
-            except Exception as e:
-                raise RuntimeError(f"Could not list transcripts: {e}")
+            except VideoUnavailable: raise RuntimeError("Video unavailable or private.")
+            except TranscriptsDisabled: raise RuntimeError("Transcripts are disabled for this video.")
+            except Exception as e: raise RuntimeError(f"Could not list transcripts: {e}")
 
-            # Prefer manual English
             try:
-                tr = listing.find_transcript(['en', 'en-US', 'en-GB'])
-                return tr.fetch()
-            except Exception:
-                pass
-
-            # Auto English
+                tr = listing.find_transcript(['en','en-US','en-GB']); return tr.fetch()
+            except Exception: pass
             try:
                 tr = listing.find_transcript(['en'])
-                if tr.is_generated:
-                    return tr.fetch()
-            except Exception:
-                pass
-
-            # First available → translate to English
+                if tr.is_generated: return tr.fetch()
+            except Exception: pass
             try:
                 first = next(iter(listing))
-                tr_en = first.translate('en')
-                return tr_en.fetch()
-            except StopIteration:
-                raise RuntimeError("No transcripts exist for this video.")
-            except NoTranscriptFound:
-                raise RuntimeError("No transcript found in any language.")
-            except Exception as e:
-                raise RuntimeError(f"Failed to translate transcript to English: {e}")
+                return first.translate('en').fetch()
+            except StopIteration: raise RuntimeError("No transcripts exist for this video.")
+            except NoTranscriptFound: raise RuntimeError("No transcript found in any language.")
+            except Exception as e: raise RuntimeError(f"Failed to translate transcript to English: {e}")
 
-        # Older library: try direct English
+        # Older lib path
         try:
-            return YouTubeTranscriptApi.get_transcript(vid, languages=['en', 'en-US', 'en-GB'])
-        except NoTranscriptFound:
-            pass
-        except TranscriptsDisabled:
-            raise RuntimeError("Transcripts are disabled for this video.")
-        except VideoUnavailable:
-            raise RuntimeError("Video unavailable or private.")
-        except Exception:
-            pass
+            return YouTubeTranscriptApi.get_transcript(vid, languages=['en','en-US','en-GB'])
+        except NoTranscriptFound: pass
+        except TranscriptsDisabled: raise RuntimeError("Transcripts are disabled for this video.")
+        except VideoUnavailable: raise RuntimeError("Video unavailable or private.")
+        except Exception: pass
 
-        # Last attempt: any transcript; otherwise yt-dlp
+        # Last attempt → any transcript or yt-dlp fallback
         try:
             return YouTubeTranscriptApi.get_transcript(vid)
         except Exception:
             alt = _ytdlp_fallback_transcript(vid)
-            if alt:
-                return alt
+            if alt: return alt
             raise RuntimeError("No transcript available for this video (or blocked/age-restricted).")
 
     def cut_by_minutes(trans: List[dict], minutes: int) -> List[dict]:
@@ -446,8 +352,7 @@ with tabs[7]:
             "1) **Concise Summary** (5–10 bullets)\n"
             "2) **Key Takeaways** (numbered)\n"
             "3) **Deviations / Off-topic Segments** — each as [MM:SS–MM:SS] + one-line reason.\n"
-            f"Expected topic (if any): '{topic_hint}'.\n\n"
-            "Transcript:\n" + text[:15000]
+            f"Expected topic (if any): '{topic_hint}'.\n\nTranscript:\n" + text[:15000]
         )
         # OpenAI first
         try:
@@ -463,43 +368,34 @@ with tabs[7]:
                 return r.choices[0].message.content
         except Exception as e:
             st.warning(f"OpenAI error: {e}")
-
         # Gemini fallback
         try:
             if GEMINI_API_KEY:
                 import google.generativeai as genai
                 genai.configure(api_key=GEMINI_API_KEY)
-                model = genai.GenerativeModel("gemini-1.5-flash")
-                out = model.generate_content(prompt)
+                out = genai.GenerativeModel("gemini-1.5-flash").generate_content(prompt)
                 return out.text
         except Exception as e:
             st.warning(f"Gemini error: {e}")
-
         return None
 
     def heuristic_deviations(trans: List[dict], topic_hint: str) -> List[Tuple[str, str]]:
-        if not topic_hint:
-            return []
+        if not topic_hint: return []
         import re as _re
         kws = {w.lower() for w in _re.findall(r"[A-Za-z0-9]+", topic_hint) if len(w) > 3}
-        if not kws:
-            return []
-        wins = []
-        bucket, start = [], None
+        if not kws: return []
+        wins, bucket, start = [], [], None
         for t in trans:
-            if start is None:
-                start = t["start"]
+            if start is None: start = t["start"]
             bucket.append(t)
             if t["start"] - start >= 45:
                 text = " ".join(x["text"].lower() for x in bucket)
                 hits = sum(1 for k in kws if k in text)
-                if hits <= max(1, len(kws)//6):
-                    wins.append((start, t["start"]))
+                if hits <= max(1, len(kws)//6): wins.append((start, t["start"]))
                 bucket, start = [], None
         out = []
-        for s, e in wins[:12]:
-            out.append((f"{int(s//60):02d}:{int(s%60):02d}-{int(e//60):02d}:{int(e%60):02d}",
-                        "Low topic keyword density"))
+        for s,e in wins[:12]:
+            out.append((f"{int(s//60):02d}:{int(s%60):02d}-{int(e//60):02d}:{int(e%60):02d}", "Low topic keyword density"))
         return out
 
     # --- Bind orchestrator to existing summarizer functions ---
@@ -514,15 +410,8 @@ with tabs[7]:
         ai = summarize_with_llm(text, expected_topic or "")
         return ai or "AI summary unavailable."
 
-    def _single_sum(url: str) -> str:
-        return _safe_ai_summary(url)
-
-    def _batch_sum(urls: List[str]) -> str:
-        outs = []
-        for u in urls:
-            outs.append(f"--- {u} ---\n{_safe_ai_summary(u)}")
-        return "\n\n".join(outs)
-
+    def _single_sum(url: str) -> str: return _safe_ai_summary(url)
+    def _batch_sum(urls: List[str]) -> str: return "\n\n".join(f"--- {u} ---\n{_safe_ai_summary(u)}" for u in urls)
     bind_youtube_functions(_single_sum, _batch_sum)
 
     # --- Execute deferred sidebar actions now that functions are bound ---
@@ -530,13 +419,9 @@ with tabs[7]:
         s = route(st.session_state.get("sb_agent_q", ""))
         st.session_state.sidebar_agent_out = execute(s)
         st.session_state._run_agent_sidebar = False
-
     if st.session_state._run_yt_sidebar:
         url_in = st.session_state.get("sb_yt_url", "")
-        if url_in:
-            st.session_state.sidebar_yt_out = _safe_ai_summary(url_in)[:1200]  # show snippet
-        else:
-            st.session_state.sidebar_yt_out = "Please enter a YouTube URL."
+        st.session_state.sidebar_yt_out = _safe_ai_summary(url_in)[:1200] if url_in else "Please enter a YouTube URL."
         st.session_state._run_yt_sidebar = False
 
     # --- Main-area action ---
@@ -548,8 +433,7 @@ with tabs[7]:
             try:
                 trans = get_best_transcript(vid)
             except RuntimeError as e:
-                st.error(str(e))
-                st.stop()
+                st.error(str(e)); st.stop()
 
             trans = cut_by_minutes(trans, max_minutes)
             text = join_transcript(trans)
@@ -564,17 +448,24 @@ with tabs[7]:
             devs = heuristic_deviations(trans, expected_topic or "")
             if devs:
                 st.markdown("### 🚥 Deviations (backup heuristic)")
-                for span, why in devs:
-                    st.write(f"- [{span}] {why}")
+                for span, why in devs: st.write(f"- [{span}] {why}")
 
             with st.expander("Raw transcript (first minutes)"):
                 st.code(text, language="text")
 
-    # --- Fancy HTML UI embed (visual layer) ---
-    import streamlit.components.v1 as components
-    from pathlib import Path
-    try:
-        html_ui = Path("static/yt_agent.html").read_text(encoding="utf-8")
-        components.html(html_ui, height=1200, scrolling=True)
-    except Exception as e:
-        st.info(f"Custom HTML UI not found ({e}). Create static/yt_agent.html to show the Tailwind interface.")
+            # ---- Inject summary into static/yt_agent.html and render
+            try:
+                tpl = Path("static/yt_agent.html").read_text(encoding="utf-8")
+                injected = tpl.replace("<!-- AI summary will be injected here -->",
+                                       f"<pre style='white-space:pre-wrap'>{html.escape(llm or 'No AI summary')}</pre>")
+                components.html(injected, height=1200, scrolling=True)
+            except Exception as e:
+                st.info(f"Custom HTML UI not found or failed to load ({e}).")
+
+    else:
+        # Show the plain template if present (no injection yet)
+        try:
+            tpl = Path("static/yt_agent.html").read_text(encoding="utf-8")
+            components.html(tpl, height=500, scrolling=True)
+        except Exception:
+            pass
