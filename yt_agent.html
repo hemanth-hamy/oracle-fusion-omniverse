@@ -1,32 +1,155 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <meta charset="utf-8">
-    <title>YouTube Summary</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            background: #fafafa;
-            padding: 20px;
-        }
-        h1 { color: #e63946; }
-        .summary {
-            background: #fff;
-            border: 1px solid #ddd;
-            padding: 15px;
-            border-radius: 8px;
-            box-shadow: 0 0 5px rgba(0,0,0,0.1);
-        }
-        .deviation {
-            color: #ff4500;
-            font-weight: bold;
-        }
-    </style>
+  <meta charset="utf-8" />
+  <title>Oracle Fusion Omniverse — YouTube Agent</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .tab-content { display:none; }
+    .tab-content.active { display:block; }
+    .btn-busy { opacity:.6; cursor:not-allowed; }
+    .callout { border:1px solid #e5e7eb; background:#f9fafb; border-radius:.75rem; padding:1rem; }
+    .callout-warn { border-color:#fde68a; background:#fffbeb; }
+  </style>
 </head>
-<body>
-    <h1>YouTube AI Summary</h1>
-    <div class="summary" id="summary-content">
-        <!-- AI summary will be injected here -->
-    </div>
+<body class="bg-gray-100 min-h-screen">
+  <div class="max-w-7xl mx-auto p-4 md:p-6 grid grid-cols-1 md:grid-cols-[280px,1fr] gap-6">
+    <aside class="bg-white rounded-2xl shadow p-4 md:sticky md:top-6 h-max">
+      <h2 class="text-lg font-semibold">Settings</h2>
+      <p class="text-sm text-gray-500">Keys optional. Put keys in server env for real AI.</p>
+      <div class="mt-3 text-sm">
+        <div>OpenAI: <span id="pill-openai" class="px-2 py-0.5 rounded bg-gray-100">—</span></div>
+        <div>Gemini: <span id="pill-gemini" class="px-2 py-0.5 rounded bg-gray-100">—</span></div>
+        <div>yt-dlp fallback: <span id="pill-ytdlp" class="px-2 py-0.5 rounded bg-gray-100">—</span></div>
+      </div>
+      <hr class="my-4">
+      <h3 class="font-semibold">Navigation</h3>
+      <nav class="mt-2 space-y-1" role="tablist">
+        <button class="tab-btn w-full text-left px-3 py-2 rounded hover:bg-gray-100" data-tab="overview">Overview</button>
+        <button class="tab-btn w-full text-left px-3 py-2 rounded hover:bg-gray-100" data-tab="youtube">YouTube AI</button>
+      </nav>
+    </aside>
+
+    <main class="space-y-6">
+      <section id="overview" class="tab-content">
+        <div class="bg-white rounded-2xl shadow p-6">
+          <h1 class="text-3xl font-bold">Oracle Fusion Omniverse</h1>
+          <p class="text-gray-600 mt-2">Personal support console for Oracle ERP, OIC, and SQL/PLSQL.</p>
+          <div class="callout mt-4">Build: <span id="utc"></span></div>
+          <div class="callout-warn callout mt-4">This page calls your local API. Run the backend first.</div>
+          <div class="mt-4">
+            <button id="ping" class="bg-indigo-600 hover:bg-indigo-700 text-white rounded px-3 py-2">Check API health</button>
+            <pre id="health" class="mt-2 bg-gray-50 border rounded p-2 text-sm"></pre>
+          </div>
+        </div>
+      </section>
+
+      <section id="youtube" class="tab-content">
+        <div class="bg-white rounded-2xl shadow p-6">
+          <h2 class="text-2xl font-bold mb-2">YouTube Summarizer + Deviations</h2>
+          <label class="block text-sm">
+            <span>YouTube URL</span>
+            <input id="yt-url" type="text" class="mt-1 w-full rounded border-gray-300 focus:ring-2 focus:ring-rose-500"
+                   placeholder="https://www.youtube.com/watch?v=VIDEO_ID">
+          </label>
+          <label class="block text-sm mt-3">
+            <span>Expected topic / keywords (optional)</span>
+            <input id="yt-topic" type="text" class="mt-1 w-full rounded border-gray-300 focus:ring-2 focus:ring-rose-500">
+          </label>
+          <div class="mt-3">
+            <label class="text-sm">Analyze first N minutes</label>
+            <input id="yt-min" type="range" min="2" max="60" value="20" class="w-full">
+            <div class="text-xs text-gray-500">Minutes: <span id="yt-min-val">20</span></div>
+          </div>
+          <button id="yt-run" class="mt-3 bg-rose-600 hover:bg-rose-700 text-white rounded px-4 py-2">
+            Summarize Video
+          </button>
+
+          <div id="yt-error" class="hidden mt-4 text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded p-3"></div>
+          <div id="yt-summary" class="mt-4 callout hidden"></div>
+          <div id="yt-deviations" class="mt-3 callout hidden"></div>
+          <details class="mt-3 bg-gray-50 border rounded">
+            <summary class="py-2 px-3 cursor-pointer">Raw transcript (first minutes)</summary>
+            <pre id="yt-transcript" class="p-3 text-xs"></pre>
+          </details>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const $ = s => document.querySelector(s);
+    const $$ = s => Array.from(document.querySelectorAll(s));
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+    // --- Router
+    const tabs = $$('.tab-btn');
+    const panels = $$('.tab-content');
+    function activate(id) {
+      tabs.forEach(b => b.classList.toggle('bg-gray-100', b.dataset.tab === id));
+      panels.forEach(p => p.classList.toggle('active', p.id === id));
+      localStorage.setItem('activeTab', id);
+    }
+    tabs.forEach(b => b.addEventListener('click', () => activate(b.dataset.tab)));
+    activate(localStorage.getItem('activeTab') || 'overview');
+
+    // --- UTC time
+    $('#utc').textContent = new Date().toISOString().replace('T',' ').replace('Z',' UTC');
+
+    // --- API base (same origin)
+    const API = (path) => `${location.origin}${path}`;
+
+    // --- Health
+    $('#ping').addEventListener('click', async () => {
+      $('#health').textContent = 'Checking…';
+      try {
+        const r = await fetch(API('/api/health'));
+        const j = await r.json();
+        $('#health').textContent = JSON.stringify(j, null, 2);
+        $('#pill-openai').textContent = j.openai ? '✅' : '—';
+        $('#pill-gemini').textContent = j.gemini ? '✅' : '—';
+        $('#pill-ytdlp').textContent = j.use_ytdlp ? '✅' : '—';
+      } catch (e) {
+        $('#health').textContent = 'Failed to reach API. Is the server running?';
+      }
+    });
+
+    // --- YouTube flow
+    $('#yt-min').addEventListener('input', e => $('#yt-min-val').textContent = e.target.value);
+    $('#yt-run').addEventListener('click', async () => {
+      const url = $('#yt-url').value.trim();
+      const topic = $('#yt-topic').value.trim();
+      const minutes = parseInt($('#yt-min').value, 10) || 20;
+
+      $('#yt-error').classList.add('hidden');
+      $('#yt-summary').classList.add('hidden');
+      $('#yt-deviations').classList.add('hidden');
+      $('#yt-transcript').textContent = '';
+
+      try {
+        const res = await fetch(API('/api/youtube'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url_or_id: url, topic_hint: topic, minutes })
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          $('#yt-error').textContent = err.detail || 'Unknown error';
+          $('#yt-error').classList.remove('hidden');
+          return;
+        }
+        const data = await res.json();
+        $('#yt-summary').textContent = data.summary || '(no summary)';
+        $('#yt-summary').classList.remove('hidden');
+        $('#yt-deviations').textContent = (data.deviations || []).join('\n') || '(no deviations detected)';
+        $('#yt-deviations').classList.remove('hidden');
+        $('#yt-transcript').textContent = data.transcript || '';
+      } catch (e) {
+        $('#yt-error').textContent = 'Request failed. Check network or CORS.';
+        $('#yt-error').classList.remove('hidden');
+      }
+    });
+  </script>
 </body>
 </html>
