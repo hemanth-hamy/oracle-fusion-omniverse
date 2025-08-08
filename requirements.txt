@@ -8,3 +8,5 @@ google-generativeai>=0.7.2
 plotly
 tiktoken
 python-dotenv
+youtube-transcript-api
+
