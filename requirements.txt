@@ -1,6 +1,10 @@
-**requirements.txt**
-```
-fastapi
-uvicorn
-openai
-```
+streamlit>=1.36,<2
+pandas>=2.0
+numpy
+requests
+pillow
+openai>=1.40
+google-generativeai>=0.7.2
+plotly
+tiktoken
+python-dotenv
