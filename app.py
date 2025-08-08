@@ -20,7 +20,13 @@ def get_key(name: str) -> Optional[str]:
 OPENAI_API_KEY = get_key("OPENAI_API_KEY") or get_key("OPENAI_KEY")
 GEMINI_API_KEY = get_key("GEMINI_API_KEY") or get_key("GOOGLE_API_KEY")
 
-# ========= Sidebar =========
+# Keep some shared session state for sidebar outputs
+if "sidebar_agent_out" not in st.session_state:
+    st.session_state.sidebar_agent_out = ""
+if "sidebar_yt_out" not in st.session_state:
+    st.session_state.sidebar_yt_out = ""
+
+# ========= Sidebar (Navigation + Quick Actions) =========
 with st.sidebar:
     st.header("🔧 Settings")
     st.caption("Keys are optional — offline playbook works without them.")
@@ -33,21 +39,63 @@ with st.sidebar:
         os.environ["GEMINI_API_KEY"] = new_gemini
         GEMINI_API_KEY = new_gemini
 
-    # Security banner (only if a key is present)
     if OPENAI_API_KEY or GEMINI_API_KEY:
         st.markdown(
             """
             <div style="border:1px solid #e3b341;padding:10px;border-radius:8px;background:#fff8e1">
-            <b>Heads up:</b> You entered a key in the sidebar. For permanent use, move it to
+            <b>Heads up:</b> You entered a key here. For permanent use, move it to
             <i>Settings → Secrets</i> so it never appears in the UI.
             </div>
             """,
             unsafe_allow_html=True,
         )
-    st.caption("How to add secrets → App → Manage App → Settings → Secrets:\nOPENAI_API_KEY='sk-...'\nGEMINI_API_KEY='...'")
+    st.caption("Secrets format:\nOPENAI_API_KEY='sk-...'\nGEMINI_API_KEY='...'")
+    st.write(f"OpenAI: {'✅' if OPENAI_API_KEY else '—'}  |  Gemini: {'✅' if GEMINI_API_KEY else '—'}")
 
     st.markdown("---")
-    st.write(f"OpenAI: {'✅' if OPENAI_API_KEY else '—'}  |  Gemini: {'✅' if GEMINI_API_KEY else '—'}")
+    st.subheader("🧭 Navigation")
+    nav_choice = st.radio(
+        "Go to section",
+        ["Overview", "Diagnose", "Analytics", "Security", "Optimize", "Integrations", "Voice Mode", "YouTube AI"],
+        index=0,
+        label_visibility="collapsed",
+    )
+
+    st.markdown("---")
+    st.subheader("⚡ Quick Actions (runs here)")
+
+    # Quick Agent Console (sidebar output)
+    agent_q = st.text_input(
+        "Agent Console input",
+        placeholder="Paste YouTube URL(s) or an ORA- error…",
+        key="sb_agent_q",
+    )
+    if st.button("Run Agent (sidebar)"):
+        s = route(agent_q)
+        st.session_state.sidebar_agent_out = execute(s)
+
+    if st.session_state.sidebar_agent_out:
+        st.caption("Agent output")
+        st.code(st.session_state.sidebar_agent_out)
+
+    # Quick YT summarize (sidebar output)
+    yt_quick = st.text_input(
+        "YouTube URL (quick summarize)",
+        placeholder="https://www.youtube.com/watch?v=VIDEO_ID",
+        key="sb_yt_url",
+    )
+    if st.button("Summarize YT (sidebar)"):
+        out = None
+        try:
+            out = None  # set in YouTube helpers later via binding
+        except Exception as e:
+            out = f"Error: {e}"
+        # We’ll fill this after we define the functions; for now keep slot.
+        st.session_state.sidebar_yt_out = "(Scroll to 'YouTube AI' tab for full summary.)"
+
+    if st.session_state.sidebar_yt_out:
+        st.caption("YouTube summary (snippet)")
+        st.write(st.session_state.sidebar_yt_out)
 
 # ========= Lightweight Oracle/OIC Error Playbook =========
 PLAYBOOK = {
@@ -162,12 +210,12 @@ with tabs[0]:
     # Agent Console (router demo)
     st.markdown("---")
     st.subheader("🧠 Agent Console (router demo)")
-    agent_q = st.text_input(
+    agent_q_main = st.text_input(
         "Ask anything (paste 1+ YouTube URLs to trigger YouTube; ORA-xxxx to trigger CrewAI)",
         placeholder="Summarize https://www.youtube.com/watch?v=dQw4w9WgXcQ"
     )
     if st.button("Run Agent"):
-        s = route(agent_q)
+        s = route(agent_q_main)
         out = execute(s)
         st.code(out)
 
@@ -282,50 +330,69 @@ with tabs[7]:
         m = re.search(r"(?:v=|youtu\.be/|shorts/)([A-Za-z0-9_-]{6,})", u)
         return m.group(1) if m else None
 
+    # ---- Backward-compatible transcript fetcher ----
     def get_best_transcript(vid: str) -> List[dict]:
         """
-        Return transcript (prefer English; else auto-translate) or raise a clear error.
+        Prefer manual/auto English; otherwise translate to English.
+        Works with both new and older youtube-transcript-api versions.
         """
-        try:
-            from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound, VideoUnavailable
-        except Exception as e:
-            raise RuntimeError(f"youtube-transcript-api not installed: {e}")
+        from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound, VideoUnavailable
 
+        # Newer versions: list_transcripts exists
+        if hasattr(YouTubeTranscriptApi, "list_transcripts"):
+            try:
+                listing = YouTubeTranscriptApi.list_transcripts(vid)
+            except VideoUnavailable:
+                raise RuntimeError("Video unavailable or private.")
+            except TranscriptsDisabled:
+                raise RuntimeError("Transcripts are disabled for this video.")
+            except Exception as e:
+                raise RuntimeError(f"Could not list transcripts: {e}")
+
+            # Prefer manual English
+            try:
+                tr = listing.find_transcript(['en', 'en-US', 'en-GB'])
+                return tr.fetch()
+            except Exception:
+                pass
+
+            # Auto English
+            try:
+                tr = listing.find_transcript(['en'])
+                if tr.is_generated:
+                    return tr.fetch()
+            except Exception:
+                pass
+
+            # First available → translate to English
+            try:
+                first = next(iter(listing))
+                tr_en = first.translate('en')
+                return tr_en.fetch()
+            except StopIteration:
+                raise RuntimeError("No transcripts exist for this video.")
+            except NoTranscriptFound:
+                raise RuntimeError("No transcript found in any language.")
+            except Exception as e:
+                raise RuntimeError(f"Failed to translate transcript to English: {e}")
+
+        # Older versions (no list_transcripts)
         try:
-            listing = YouTubeTranscriptApi.list_transcripts(vid)
-        except VideoUnavailable:
-            raise RuntimeError("Video unavailable or private.")
+            return YouTubeTranscriptApi.get_transcript(vid, languages=['en', 'en-US', 'en-GB'])
+        except NoTranscriptFound:
+            pass
         except TranscriptsDisabled:
             raise RuntimeError("Transcripts are disabled for this video.")
-        except Exception as e:
-            raise RuntimeError(f"Could not list transcripts: {e}")
-
-        # 1) Manual English
-        try:
-            tr = listing.find_transcript(['en', 'en-US', 'en-GB'])
-            return tr.fetch()
+        except VideoUnavailable:
+            raise RuntimeError("Video unavailable or private.")
         except Exception:
             pass
 
-        # 2) Auto-generated English
+        # Last attempt: any transcript (language unknown)
         try:
-            tr = listing.find_transcript(['en'])
-            if tr.is_generated:
-                return tr.fetch()
+            return YouTubeTranscriptApi.get_transcript(vid)
         except Exception:
-            pass
-
-        # 3) First available → translate to English
-        try:
-            first = next(iter(listing))
-            tr_en = first.translate('en')
-            return tr_en.fetch()
-        except StopIteration:
-            raise RuntimeError("No transcripts exist for this video.")
-        except NoTranscriptFound:
-            raise RuntimeError("No transcript found in any language.")
-        except Exception as e:
-            raise RuntimeError(f"Failed to translate transcript to English: {e}")
+            raise RuntimeError("No transcript available for this video (or blocked/age-restricted).")
 
     def cut_by_minutes(trans: List[dict], minutes: int) -> List[dict]:
         limit = minutes * 60
@@ -376,7 +443,8 @@ with tabs[7]:
     def heuristic_deviations(trans: List[dict], topic_hint: str) -> List[Tuple[str, str]]:
         if not topic_hint:
             return []
-        kws = {w.lower() for w in re.findall(r"[A-Za-z0-9]+", topic_hint) if len(w) > 3}
+        import re as _re
+        kws = {w.lower() for w in _re.findall(r"[A-Za-z0-9]+", topic_hint) if len(w) > 3}
         if not kws:
             return []
         wins = []
@@ -399,7 +467,6 @@ with tabs[7]:
 
     # --- Bind orchestrator to existing summarizer functions ---
     def _safe_ai_summary(vid_or_url: str) -> str:
-        """Takes a full URL or raw video ID, returns an AI summary (or fallback message)."""
         v = _video_id(vid_or_url) or vid_or_url
         try:
             trans = get_best_transcript(v)
@@ -421,7 +488,7 @@ with tabs[7]:
 
     bind_youtube_functions(_single_sum, _batch_sum)
 
-    # --- UI action ---
+    # --- UI action (main area) ---
     if st.button("Summarize Video", type="primary"):
         vid = _video_id(url)
         if not vid:
