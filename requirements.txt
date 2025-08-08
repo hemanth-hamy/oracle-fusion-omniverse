@@ -8,3 +8,5 @@ google-generativeai>=0.7.2
 python-dotenv
 plotly
 youtube-transcript-api>=0.6.2
+yt-dlp
+webvtt-py
