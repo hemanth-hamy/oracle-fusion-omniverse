@@ -20,11 +20,14 @@ def get_key(name: str) -> Optional[str]:
 OPENAI_API_KEY = get_key("OPENAI_API_KEY") or get_key("OPENAI_KEY")
 GEMINI_API_KEY = get_key("GEMINI_API_KEY") or get_key("GOOGLE_API_KEY")
 
-# Keep some shared session state for sidebar outputs
-if "sidebar_agent_out" not in st.session_state:
-    st.session_state.sidebar_agent_out = ""
-if "sidebar_yt_out" not in st.session_state:
-    st.session_state.sidebar_yt_out = ""
+# ========= Session state for sidebar actions =========
+for k, v in {
+    "sidebar_agent_out": "",
+    "sidebar_yt_out": "",
+    "_run_agent_sidebar": False,
+    "_run_yt_sidebar": False,
+}.items():
+    st.session_state.setdefault(k, v)
 
 # ========= Sidebar (Navigation + Quick Actions) =========
 with st.sidebar:
@@ -64,34 +67,25 @@ with st.sidebar:
     st.markdown("---")
     st.subheader("⚡ Quick Actions (runs here)")
 
-    # Quick Agent Console (sidebar output)
     agent_q = st.text_input(
         "Agent Console input",
         placeholder="Paste YouTube URL(s) or an ORA- error…",
         key="sb_agent_q",
     )
     if st.button("Run Agent (sidebar)"):
-        s = route(agent_q)
-        st.session_state.sidebar_agent_out = execute(s)
+        st.session_state._run_agent_sidebar = True  # will execute after functions are bound
 
     if st.session_state.sidebar_agent_out:
         st.caption("Agent output")
         st.code(st.session_state.sidebar_agent_out)
 
-    # Quick YT summarize (sidebar output)
     yt_quick = st.text_input(
         "YouTube URL (quick summarize)",
         placeholder="https://www.youtube.com/watch?v=VIDEO_ID",
         key="sb_yt_url",
     )
     if st.button("Summarize YT (sidebar)"):
-        out = None
-        try:
-            out = None  # set in YouTube helpers later via binding
-        except Exception as e:
-            out = f"Error: {e}"
-        # We’ll fill this after we define the functions; for now keep slot.
-        st.session_state.sidebar_yt_out = "(Scroll to 'YouTube AI' tab for full summary.)"
+        st.session_state._run_yt_sidebar = True  # will execute in YT tab once helpers exist
 
     if st.session_state.sidebar_yt_out:
         st.caption("YouTube summary (snippet)")
@@ -212,7 +206,7 @@ with tabs[0]:
     st.subheader("🧠 Agent Console (router demo)")
     agent_q_main = st.text_input(
         "Ask anything (paste 1+ YouTube URLs to trigger YouTube; ORA-xxxx to trigger CrewAI)",
-        placeholder="Summarize https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        placeholder="Summarize https://www.youtube.com/watch?v=iG9CE55wbtY (TED talk)"
     )
     if st.button("Run Agent"):
         s = route(agent_q_main)
@@ -330,11 +324,51 @@ with tabs[7]:
         m = re.search(r"(?:v=|youtu\.be/|shorts/)([A-Za-z0-9_-]{6,})", u)
         return m.group(1) if m else None
 
+    # ---- yt-dlp fallback when transcript API is disabled ----
+    def _ytdlp_fallback_transcript(vid: str) -> Optional[List[dict]]:
+        """
+        Try grabbing auto-captions via yt-dlp + webvtt when YouTubeTranscriptApi fails.
+        Returns [{'start': seconds, 'text': '...'}] or None.
+        """
+        try:
+            import yt_dlp, webvtt, tempfile, os
+            url_full = f"https://www.youtube.com/watch?v={vid}"
+            tmpdir = tempfile.mkdtemp()
+            outtmpl = os.path.join(tmpdir, "%(id)s")
+            ydl_opts = {
+                "skip_download": True,
+                "quiet": True,
+                "subtitleslangs": ["en", "en-US", "en-GB"],
+                "writeautomaticsub": True,
+                "writesubtitles": True,
+                "outtmpl": outtmpl,
+            }
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.extract_info(url_full, download=True)
+            # Find any .vtt in tmpdir
+            vtt_file = None
+            for fname in os.listdir(tmpdir):
+                if fname.endswith(".vtt"):
+                    vtt_file = os.path.join(tmpdir, fname)
+                    break
+            if not vtt_file:
+                return None
+            items = []
+            for cue in webvtt.read(vtt_file):
+                # "HH:MM:SS.mmm" → seconds (int)
+                def _to_sec(ts: str):
+                    h, m, s = ts.replace(",", ".").split(":")
+                    return int(float(h) * 3600 + float(m) * 60 + float(s))
+                items.append({"start": _to_sec(cue.start), "text": cue.text})
+            return items or None
+        except Exception:
+            return None
+
     # ---- Backward-compatible transcript fetcher ----
     def get_best_transcript(vid: str) -> List[dict]:
         """
         Prefer manual/auto English; otherwise translate to English.
-        Works with both new and older youtube-transcript-api versions.
+        Works with new/old youtube-transcript-api; falls back to yt-dlp auto-captions.
         """
         from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound, VideoUnavailable
 
@@ -376,7 +410,7 @@ with tabs[7]:
             except Exception as e:
                 raise RuntimeError(f"Failed to translate transcript to English: {e}")
 
-        # Older versions (no list_transcripts)
+        # Older library: try direct English
         try:
             return YouTubeTranscriptApi.get_transcript(vid, languages=['en', 'en-US', 'en-GB'])
         except NoTranscriptFound:
@@ -388,10 +422,13 @@ with tabs[7]:
         except Exception:
             pass
 
-        # Last attempt: any transcript (language unknown)
+        # Last attempt: any transcript; otherwise yt-dlp
         try:
             return YouTubeTranscriptApi.get_transcript(vid)
         except Exception:
+            alt = _ytdlp_fallback_transcript(vid)
+            if alt:
+                return alt
             raise RuntimeError("No transcript available for this video (or blocked/age-restricted).")
 
     def cut_by_minutes(trans: List[dict], minutes: int) -> List[dict]:
@@ -488,7 +525,21 @@ with tabs[7]:
 
     bind_youtube_functions(_single_sum, _batch_sum)
 
-    # --- UI action (main area) ---
+    # --- Execute deferred sidebar actions now that functions are bound ---
+    if st.session_state._run_agent_sidebar:
+        s = route(st.session_state.get("sb_agent_q", ""))
+        st.session_state.sidebar_agent_out = execute(s)
+        st.session_state._run_agent_sidebar = False
+
+    if st.session_state._run_yt_sidebar:
+        url_in = st.session_state.get("sb_yt_url", "")
+        if url_in:
+            st.session_state.sidebar_yt_out = _safe_ai_summary(url_in)[:1200]  # show snippet
+        else:
+            st.session_state.sidebar_yt_out = "Please enter a YouTube URL."
+        st.session_state._run_yt_sidebar = False
+
+    # --- Main-area action ---
     if st.button("Summarize Video", type="primary"):
         vid = _video_id(url)
         if not vid:
