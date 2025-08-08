@@ -5,8 +5,6 @@ requests
 pillow
 openai>=1.40
 google-generativeai>=0.7.2
-plotly
-tiktoken
 python-dotenv
+plotly
 youtube-transcript-api
-
