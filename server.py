@@ -5,6 +5,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from datetime import datetime
 import re
+from fastapi.responses import HTMLResponse
+from pathlib import Path
 
 # Transcript libs
 from youtube_transcript_api import (
@@ -244,6 +246,13 @@ def heuristic_deviations(trans: List[Dict[str, Any]], topic_hint: str) -> List[s
     return out
 
 # --------- API ---------
+@app.get("/", response_class=HTMLResponse)
+def root_page():
+    html_path = Path(__file__).with_name("yt_agent.html")
+    if not html_path.exists():
+        return HTMLResponse("<h1>Missing yt_agent.html</h1>", status_code=500)
+    return HTMLResponse(html_path.read_text(encoding="utf-8"))
+
 @app.get("/api/health")
 def health():
     return {
